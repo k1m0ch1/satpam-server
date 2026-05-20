@@ -135,11 +135,23 @@ func (h *handler) loadYARA() (string, error) {
 
 func (h *handler) loadConfig() (ScanConfig, error) {
 	data, err := os.ReadFile(filepath.Join(h.rulesDir, "config.json"))
+	if os.IsNotExist(err) {
+		return defaultScanConfig(), nil
+	}
 	if err != nil {
 		return ScanConfig{}, err
 	}
 	var cfg ScanConfig
 	return cfg, json.Unmarshal(data, &cfg)
+}
+
+func defaultScanConfig() ScanConfig {
+	return ScanConfig{
+		Paths:       []string{"/var/www", "/home"},
+		Extensions:  []string{".php", ".sh", ".py", ".js", ".rb", ".pl"},
+		MaxFileMB:   10,
+		ExcludeDirs: []string{".git", "node_modules", "vendor"},
+	}
 }
 
 // ── Findings ──────────────────────────────────────────────────────────────────
