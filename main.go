@@ -15,6 +15,12 @@ func main() {
 	rulesDir := flag.String("rules", "./rules", "directory containing .yar files and config.json")
 	flag.Parse()
 
+	token, err := LoadOrSetupConfig()
+	if err != nil {
+		slog.Error("auth config", "err", err)
+		os.Exit(1)
+	}
+
 	h := newHandler(*rulesDir)
 
 	mux := http.NewServeMux()
@@ -47,7 +53,7 @@ func main() {
 	mux.HandleFunc("GET /v1/inventory",  h.getInventory)
 
 	slog.Info("satpam-server starting", "version", version, "addr", *addr, "rules", *rulesDir)
-	if err := http.ListenAndServe(*addr, cors(mux)); err != nil {
+	if err := http.ListenAndServe(*addr, cors(bearerAuth(token, mux))); err != nil {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
 	}
