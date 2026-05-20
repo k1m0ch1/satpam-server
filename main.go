@@ -36,6 +36,10 @@ func main() {
 	mux.HandleFunc("GET /v1/commands/history",      h.getCommandsForAgent) // panel history
 	mux.HandleFunc("POST /v1/commands/{id}/ack",    h.postCommandAck)      // agent acks
 
+	// Inventory / tech-stack discovery (agent → server, panel ← server)
+	mux.HandleFunc("POST /v1/inventory", h.postInventory)
+	mux.HandleFunc("GET /v1/inventory",  h.getInventory)
+
 	slog.Info("satpam-server starting", "addr", *addr, "rules", *rulesDir)
 	if err := http.ListenAndServe(*addr, cors(mux)); err != nil {
 		slog.Error("server failed", "err", err)

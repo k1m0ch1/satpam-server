@@ -17,10 +17,11 @@ const (
 )
 
 type handler struct {
-	rulesDir string
-	findings *findingStore
-	agents   *agentStore
-	commands *commandStore
+	rulesDir  string
+	findings  *findingStore
+	agents    *agentStore
+	commands  *commandStore
+	inventory *inventoryStore
 
 	mu       sync.RWMutex
 	cached   *RuleSet
@@ -29,10 +30,11 @@ type handler struct {
 
 func newHandler(rulesDir string) *handler {
 	return &handler{
-		rulesDir: rulesDir,
-		findings: newFindingStore(),
-		agents:   newAgentStore(),
-		commands: newCommandStore(),
+		rulesDir:  rulesDir,
+		findings:  newFindingStore(),
+		agents:    newAgentStore(),
+		commands:  newCommandStore(),
+		inventory: newInventoryStore(),
 	}
 }
 
@@ -50,6 +52,8 @@ type ScanConfig struct {
 	Extensions  []string `json:"extensions"`
 	MaxFileMB   int      `json:"max_file_size_mb"`
 	ExcludeDirs []string `json:"exclude_dirs"`
+	// SpeedMode instructs the agent to grep for keywords before full YARA scan.
+	SpeedMode bool `json:"speed_mode"`
 }
 
 func (h *handler) getRules(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +244,66 @@ func (h *handler) postCommandAck(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("command acked", "id", id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── Inventory (tech-stack discovery) ─────────────────────────────────────────
+
+// postInventory is called by agents after a stack scan.
+// POST /v1/inventory
+func (h *handler) postInventory(w http.ResponseWriter, r *http.Request) {
+	var snap InventorySnapshot
+	if err := json.NewDecoder(r.Body).Decode(&snap); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if snap.AgentID == "" {
+		http.Error(w, "agent_id required", http.StatusBadRequest)
+		return
+	}
+	h.inventory.update(snap)
+	slog.Info("inventory received",
+		"agent", snap.AgentID,
+		"host", snap.Hostname,
+		"packages", len(snap.Software),
+	)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// getInventory is called by the panel.
+//
+//   GET /v1/inventory                       → summary list (all agents)
+//   GET /v1/inventory?agent_id=foo          → full snapshot for one agent
+//   GET /v1/inventory?agent_id=foo&q=nginx  → search within snapshot
+//   GET /v1/inventory?agent_id=foo&type=service
+//   GET /v1/inventory?agent_id=foo&source=dpkg
+func (h *handler) getInventory(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
+
+	if agentID == "" {
+		jsonOK(w, h.inventory.list())
+		return
+	}
+
+	nameq   := r.URL.Query().Get("q")
+	typeq   := r.URL.Query().Get("type")
+	sourceq := r.URL.Query().Get("source")
+
+	if nameq != "" || typeq != "" || sourceq != "" {
+		results := h.inventory.search(agentID, nameq, typeq, sourceq)
+		if results == nil {
+			http.Error(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		jsonOK(w, results)
+		return
+	}
+
+	snap := h.inventory.get(agentID)
+	if snap == nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	jsonOK(w, snap)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
