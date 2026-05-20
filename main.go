@@ -27,8 +27,11 @@ func main() {
 	mux.HandleFunc("GET /v1/findings",  h.getFindings)
 
 	// Heartbeat + agents (agent → server, panel ← server)
-	mux.HandleFunc("POST /v1/heartbeat", h.postHeartbeat)
-	mux.HandleFunc("GET /v1/agents",     h.getAgents)
+	mux.HandleFunc("POST /v1/heartbeat",           h.postHeartbeat)
+	mux.HandleFunc("GET /v1/agents",               h.getAgents)
+	mux.HandleFunc("GET /v1/agents/{id}",          h.getAgent)
+	mux.HandleFunc("GET /v1/agents/{id}/heartbeats", h.getAgentHeartbeats)
+	mux.HandleFunc("GET /v1/agents/{id}/events",   h.getAgentEvents)
 
 	// Commands (panel → server → agent)
 	mux.HandleFunc("POST /v1/commands",             h.postCommand)

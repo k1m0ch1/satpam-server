@@ -29,12 +29,28 @@ type handler struct {
 }
 
 func newHandler(rulesDir string) *handler {
-	return &handler{
+	h := &handler{
 		rulesDir:  rulesDir,
 		findings:  newFindingStore(),
 		agents:    newAgentStore(),
 		commands:  newCommandStore(),
 		inventory: newInventoryStore(),
+	}
+	go h.offlineSweeper()
+	return h
+}
+
+// offlineSweeper runs every minute and marks agents offline when they stop pinging.
+func (h *handler) offlineSweeper() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		threshold := time.Now().Add(-agentOfflineAfter)
+		for _, id := range h.agents.ids() {
+			if ls, ok := h.agents.lastSeen(id); ok && ls.Before(threshold) {
+				h.agents.markOffline(id, ls.Add(agentOfflineAfter))
+			}
+		}
 	}
 }
 
@@ -172,9 +188,10 @@ func (h *handler) getFindings(w http.ResponseWriter, r *http.Request) {
 // ── Heartbeat / Agents ────────────────────────────────────────────────────────
 
 type heartbeatPayload struct {
-	AgentID string `json:"agent_id"`
-	OS      string `json:"os"`
-	Arch    string `json:"arch"`
+	AgentID  string `json:"agent_id"`
+	OS       string `json:"os"`
+	Arch     string `json:"arch"`
+	Hostname string `json:"hostname"`
 }
 
 func (h *handler) postHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -183,12 +200,57 @@ func (h *handler) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
-	h.agents.heartbeat(p.AgentID, p.OS, p.Arch)
+	h.agents.heartbeat(p.AgentID, p.OS, p.Arch, p.Hostname)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// getAgents returns all known agents with current online status.
+// GET /v1/agents
 func (h *handler) getAgents(w http.ResponseWriter, _ *http.Request) {
 	jsonOK(w, h.agents.list())
+}
+
+// getAgent returns a single agent's detail.
+// GET /v1/agents/{id}
+func (h *handler) getAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	a := h.agents.get(id)
+	if a == nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	jsonOK(w, a)
+}
+
+// getAgentHeartbeats returns the recorded heartbeat timestamps for one agent.
+// The panel uses these to render a live/dead timeline.
+// GET /v1/agents/{id}/heartbeats
+func (h *handler) getAgentHeartbeats(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	hbs := h.agents.heartbeatHistory(id)
+	if hbs == nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	jsonOK(w, map[string]any{
+		"agent_id":   id,
+		"heartbeats": hbs,
+	})
+}
+
+// getAgentEvents returns the online/offline transition log for one agent.
+// GET /v1/agents/{id}/events
+func (h *handler) getAgentEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	evs := h.agents.statusEvents(id)
+	if evs == nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	jsonOK(w, map[string]any{
+		"agent_id": id,
+		"events":   evs,
+	})
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
