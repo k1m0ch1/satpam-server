@@ -24,6 +24,7 @@ type handler struct {
 	commands  *commandStore
 	inventory *inventoryStore
 	metrics   *metricsStore
+	logEvents *logEventStore
 
 	mu       sync.RWMutex
 	cached   *RuleSet
@@ -38,6 +39,7 @@ func newHandler(rulesDir string) *handler {
 		commands:  newCommandStore(),
 		inventory: newInventoryStore(),
 		metrics:   newMetricsStore(),
+		logEvents: newLogEventStore(),
 	}
 	go h.offlineSweeper()
 	return h
@@ -443,6 +445,56 @@ func (h *handler) getMetricsLatest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, p)
+}
+
+// ── Log Events ────────────────────────────────────────────────────────────────
+
+type logEventsIngest struct {
+	AgentID string     `json:"agent_id"`
+	Events  []LogEvent `json:"events"`
+}
+
+func (h *handler) postLogEvents(w http.ResponseWriter, r *http.Request) {
+	var payload logEventsIngest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if payload.AgentID == "" || len(payload.Events) == 0 {
+		http.Error(w, "agent_id and events required", http.StatusBadRequest)
+		return
+	}
+	for i := range payload.Events {
+		payload.Events[i].AgentID = payload.AgentID
+		if payload.Events[i].Timestamp.IsZero() {
+			payload.Events[i].Timestamp = time.Now().UTC()
+		}
+	}
+	h.logEvents.add(payload.AgentID, payload.Events)
+	slog.Info("log events received", "agent", payload.AgentID, "count", len(payload.Events))
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID == "" {
+		http.Error(w, "agent_id required", http.StatusBadRequest)
+		return
+	}
+	source := r.URL.Query().Get("source")
+	level  := r.URL.Query().Get("level")
+	limit  := 200
+	if lq := r.URL.Query().Get("limit"); lq != "" {
+		n := 0
+		if _, err := fmt.Sscanf(lq, "%d", &n); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+	events := h.logEvents.query(agentID, source, level, limit)
+	if events == nil {
+		events = []LogEvent{}
+	}
+	jsonOK(w, events)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
