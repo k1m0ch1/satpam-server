@@ -52,6 +52,11 @@ func main() {
 	mux.HandleFunc("POST /v1/inventory", h.postInventory)
 	mux.HandleFunc("GET /v1/inventory",  h.getInventory)
 
+	// Metrics (agent → server every 5min, panel ← server)
+	mux.HandleFunc("POST /v1/metrics",                h.postMetrics)
+	mux.HandleFunc("GET /v1/metrics",                 h.getMetrics)
+	mux.HandleFunc("GET /v1/agents/{id}/metrics",     h.getMetricsLatest)
+
 	slog.Info("satpam-server starting", "version", version, "addr", *addr, "rules", *rulesDir)
 	if err := http.ListenAndServe(*addr, cors(bearerAuth(token, mux))); err != nil {
 		slog.Error("server failed", "err", err)

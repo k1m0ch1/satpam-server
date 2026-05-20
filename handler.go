@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -22,6 +23,7 @@ type handler struct {
 	agents    *agentStore
 	commands  *commandStore
 	inventory *inventoryStore
+	metrics   *metricsStore
 
 	mu       sync.RWMutex
 	cached   *RuleSet
@@ -35,6 +37,7 @@ func newHandler(rulesDir string) *handler {
 		agents:    newAgentStore(),
 		commands:  newCommandStore(),
 		inventory: newInventoryStore(),
+		metrics:   newMetricsStore(),
 	}
 	go h.offlineSweeper()
 	return h
@@ -378,6 +381,68 @@ func (h *handler) getInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, snap)
+}
+
+// ── Metrics ───────────────────────────────────────────────────────────────────
+
+type metricsIngest struct {
+	AgentID string       `json:"agent_id"`
+	Metrics MetricsPoint `json:"metrics"`
+}
+
+func (h *handler) postMetrics(w http.ResponseWriter, r *http.Request) {
+	var payload metricsIngest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if payload.AgentID == "" {
+		http.Error(w, "agent_id required", http.StatusBadRequest)
+		return
+	}
+	payload.Metrics.AgentID = payload.AgentID
+	if payload.Metrics.Timestamp.IsZero() {
+		payload.Metrics.Timestamp = time.Now().UTC()
+	}
+	h.metrics.add(payload.Metrics)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *handler) getMetrics(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID == "" {
+		http.Error(w, "agent_id required", http.StatusBadRequest)
+		return
+	}
+
+	var since time.Time
+	if s := r.URL.Query().Get("since"); s != "" {
+		since, _ = time.Parse(time.RFC3339, s)
+	}
+
+	limit := 100
+	if lq := r.URL.Query().Get("limit"); lq != "" {
+		n := 0
+		if _, err := fmt.Sscanf(lq, "%d", &n); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+
+	points := h.metrics.query(agentID, since, limit)
+	if points == nil {
+		points = []MetricsPoint{}
+	}
+	jsonOK(w, points)
+}
+
+func (h *handler) getMetricsLatest(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	p, ok := h.metrics.latest(agentID)
+	if !ok {
+		http.Error(w, "no metrics", http.StatusNotFound)
+		return
+	}
+	jsonOK(w, p)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
