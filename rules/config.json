@@ -1,0 +1,6 @@
+{
+  "paths": ["/var/www/html", "/home"],
+  "extensions": [".php", ".php3", ".php4", ".php5", ".php7", ".phtml", ".phar", ".shtml", ".js", ".html", ".htm"],
+  "max_file_size_mb": 10,
+  "exclude_dirs": [".git", "vendor", "node_modules", ".cache", ".svn"]
+}
