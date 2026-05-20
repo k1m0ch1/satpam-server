@@ -61,6 +61,10 @@ func main() {
 	mux.HandleFunc("POST /v1/log-events", h.postLogEvents)
 	mux.HandleFunc("GET /v1/log-events",  h.getLogEvents)
 
+	// Version + self-update
+	mux.HandleFunc("GET /v1/version",  h.getVersion)
+	mux.HandleFunc("POST /v1/update",  h.postUpdate)
+
 	slog.Info("satpam-server starting", "version", version, "addr", *addr, "rules", *rulesDir)
 	if err := http.ListenAndServe(*addr, cors(bearerAuth(token, mux))); err != nil {
 		slog.Error("server failed", "err", err)

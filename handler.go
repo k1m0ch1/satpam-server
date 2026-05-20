@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -495,6 +497,77 @@ func (h *handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 		events = []LogEvent{}
 	}
 	jsonOK(w, events)
+}
+
+// ── Version / Self-update ─────────────────────────────────────────────────────
+
+// getVersion returns the running version and whether an update is available.
+// GET /v1/version
+func (h *handler) getVersion(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
+	info := map[string]any{
+		"version":          version,
+		"os":               runtime.GOOS,
+		"arch":             runtime.GOARCH,
+		"update_available": false,
+		"latest":           version,
+	}
+
+	rel, err := fetchLatestRelease(ctx)
+	if err == nil {
+		info["latest"] = rel.TagName
+		info["update_available"] = isNewer(rel.TagName, version)
+	}
+	jsonOK(w, info)
+}
+
+// postUpdate checks for a newer release, downloads it, and relaunches the process.
+// The HTTP response is flushed before the relaunch so the caller receives feedback.
+// POST /v1/update
+func (h *handler) postUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+
+	rel, err := fetchLatestRelease(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("check release: %v", err), http.StatusBadGateway)
+		return
+	}
+
+	if !isNewer(rel.TagName, version) {
+		jsonOK(w, map[string]any{
+			"status":  "up_to_date",
+			"version": version,
+		})
+		return
+	}
+
+	assetURL, err := findAssetURL(rel)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotImplemented)
+		return
+	}
+
+	// Flush the response before restarting so the client gets feedback.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":      "updating",
+		"from":        version,
+		"to":          rel.TagName,
+		"message":     "Downloading and applying update. Server will restart.",
+	})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	go func() {
+		if err := applyUpdate(ctx, assetURL, rel.TagName); err != nil {
+			slog.Error("self-update failed", "err", err)
+		}
+	}()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
