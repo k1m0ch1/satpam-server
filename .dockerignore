@@ -1,0 +1,12 @@
+.git
+.github
+*.md
+*.exe
+*.test
+*.out
+*.log
+satpam-server
+docker-compose*.yml
+Dockerfile*
+arch.md
+how-to-run.md

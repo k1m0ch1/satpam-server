@@ -7,6 +7,9 @@ import (
 	"os"
 )
 
+// version is injected at build time via -ldflags "-X main.version=vX.Y.Z".
+var version = "dev"
+
 func main() {
 	addr     := flag.String("addr", ":8080", "listen address")
 	rulesDir := flag.String("rules", "./rules", "directory containing .yar files and config.json")
@@ -43,7 +46,7 @@ func main() {
 	mux.HandleFunc("POST /v1/inventory", h.postInventory)
 	mux.HandleFunc("GET /v1/inventory",  h.getInventory)
 
-	slog.Info("satpam-server starting", "addr", *addr, "rules", *rulesDir)
+	slog.Info("satpam-server starting", "version", version, "addr", *addr, "rules", *rulesDir)
 	if err := http.ListenAndServe(*addr, cors(mux)); err != nil {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)

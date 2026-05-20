@@ -1,0 +1,27 @@
+services:
+  satpam-server:
+    image: ghcr.io/k1m0ch1/satpam-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+    container_name: satpam-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./rules:/rules:ro
+    environment:
+      - TZ=UTC
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
